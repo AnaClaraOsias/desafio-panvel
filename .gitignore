@@ -1,0 +1,11 @@
+# Ambientes Virtuais
+venv/
+env/
+
+# Ficheiros de Configuração e Segredos
+.env
+__pycache__/
+*.pyc
+
+# Base de Dados Gerada (o script ingestao_bulas.py cria isto localmente, não precisa ir para o Git)
+dados/chroma_db/

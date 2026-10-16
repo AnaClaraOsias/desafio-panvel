@@ -1,0 +1,356 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assistente Panvel</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 850px;
+      margin: 30px auto;
+      padding: 0 16px;
+      color: #242424;
+      background: #f7f8f7;
+    }
+
+    h1 {
+      color: #087443;
+    }
+
+    #chat {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 16px;
+      min-height: 350px;
+    }
+
+    .message {
+      margin: 14px 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .user {
+      font-weight: bold;
+    }
+
+    .assistant {
+      line-height: 1.5;
+    }
+
+    .assistant a {
+      color: #087443;
+      overflow-wrap: anywhere;
+    }
+
+    details {
+      background: #f1f4f2;
+      padding: 8px;
+      margin: 8px 0;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin-bottom: 0;
+    }
+
+    form {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+
+    button {
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 8px;
+      background: #087443;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: wait;
+    }
+
+    @media (max-width: 520px) {
+      body {
+        margin: 16px auto;
+      }
+
+      form {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Assistente Panvel</h1>
+  <p>Consulte informações sobre medicamentos e filiais.</p>
+
+  <div id="chat" aria-live="polite"></div>
+
+  <form id="form">
+    <input
+      id="question"
+      type="text"
+      placeholder="Digite sua pergunta..."
+      autocomplete="off"
+      required
+    >
+    <button id="send" type="submit">Enviar</button>
+  </form>
+
+  <script>
+    function formatarTexto(texto) {
+      // Escapa HTML antes de aplicar a formatação.
+      const escapar = (s) => s.replace(/[&<>"]/g, (c) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;"
+      })[c]);
+
+      let html = escapar(texto);
+
+      // Remove barras invertidas usadas para escapar pontuação Markdown.
+      html = html.replace(/\\([\\`*_{}[\]()#+.!|>-])/g, "$1");
+
+      // Formatação Markdown básica.
+      html = html.replace(/\*\*(.*?)\*\*/gs, "<strong>$1</strong>");
+      html = html.replace(/\*(.*?)\*/gs, "<em>$1</em>");
+
+      html = html.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+      );
+
+      // Remove barras usadas no fim das linhas.
+      html = html.replace(/[ \t]*\\(?=\n)/g, "");
+
+      return html.replace(/\n/g, "<br>");
+    }
+
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const input = document.getElementById("question");
+    const send = document.getElementById("send");
+
+    // Mantém o contexto entre mensagens durante esta sessão.
+    const messages = [];
+
+    function addMessage(label, text, cssClass) {
+      const el = document.createElement("div");
+      el.className = `message ${cssClass}`;
+
+      if (cssClass === "assistant") {
+        el.innerHTML =
+          `<strong>${label}:</strong> ${formatarTexto(text)}`;
+      } else {
+        const strong = document.createElement("strong");
+        strong.textContent = `${label}: `;
+        el.append(strong, document.createTextNode(text));
+      }
+
+      chat.appendChild(el);
+      return el;
+    }
+
+    function addToolEvent(title, data) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = title;
+
+      const pre = document.createElement("pre");
+
+      if (typeof data === "object" && data !== null) {
+        pre.textContent = JSON.stringify(data, null, 2);
+      } else {
+        pre.textContent = String(data ?? "");
+      }
+
+      details.append(summary, pre);
+      chat.appendChild(details);
+    }
+
+    function interpretarEvento(bloco) {
+      let tipo = "message";
+      let dados = {};
+
+      for (const linha of bloco.split("\n")) {
+        if (linha.startsWith("event: ")) {
+          tipo = linha.slice(7).trim();
+        } else if (linha.startsWith("data: ")) {
+          try {
+            dados = JSON.parse(linha.slice(6));
+          } catch {
+            dados = {};
+          }
+        }
+      }
+
+      return { tipo, dados };
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const question = input.value.trim();
+
+      if (!question || send.disabled) {
+        return;
+      }
+
+      messages.push({
+        role: "user",
+        content: question
+      });
+
+      addMessage("Você", question, "user");
+
+      input.value = "";
+      send.disabled = true;
+
+      const answer = addMessage("Panvel", "", "assistant");
+      let answerText = "";
+
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:8000/chat",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ messages })
+          }
+        );
+
+        if (!response.ok || !response.body) {
+          throw new Error(`Erro HTTP ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+
+          const eventos = buffer.split("\n\n");
+          buffer = eventos.pop() ?? "";
+
+          for (const bloco of eventos) {
+            if (!bloco.trim()) {
+              continue;
+            }
+
+            const { tipo, dados } = interpretarEvento(bloco);
+
+            if (tipo === "token") {
+              answerText += dados.text || "";
+
+              answer.innerHTML =
+                `<strong>Panvel:</strong> ${formatarTexto(answerText)}`;
+
+            } else if (tipo === "tool_start") {
+              addToolEvent(
+                `Ferramenta chamada: ${dados.name || "desconhecida"}`,
+                dados.arguments ?? {}
+              );
+
+            } else if (tipo === "tool_end") {
+              const resultado = String(dados.result || "");
+
+              const resumo = resultado.length > 350
+                ? resultado.slice(0, 350) + "\n\n[Resultado resumido]"
+                : resultado;
+
+              addToolEvent(
+                `Resultado da ferramenta: ${dados.name || "desconhecida"}`,
+                resumo
+              );
+
+            } else if (tipo === "error") {
+              answerText +=
+                `\nErro: ${dados.message || "Erro desconhecido."}`;
+
+              answer.innerHTML =
+                `<strong>Panvel:</strong> ${formatarTexto(answerText)}`;
+            }
+          }
+        }
+
+        // Processa qualquer evento que tenha ficado no buffer.
+        if (buffer.trim()) {
+          const { tipo, dados } = interpretarEvento(buffer);
+
+          if (tipo === "token") {
+            answerText += dados.text || "";
+
+            answer.innerHTML =
+              `<strong>Panvel:</strong> ${formatarTexto(answerText)}`;
+
+          } else if (tipo === "error") {
+            answerText +=
+              `\nErro: ${dados.message || "Erro desconhecido."}`;
+
+            answer.innerHTML =
+              `<strong>Panvel:</strong> ${formatarTexto(answerText)}`;
+          }
+        }
+
+        messages.push({
+          role: "assistant",
+          content: answerText
+        });
+
+        if (!answerText.trim()) {
+          answer.innerHTML =
+            "<strong>Panvel:</strong> A conexão terminou sem uma resposta de texto.";
+        }
+
+      } catch (error) {
+        answer.textContent =
+          `Erro de conexão: ${error.message}. Verifique se o backend está ativo.`;
+
+        // Remove a pergunta do histórico se a chamada falhou.
+        messages.pop();
+
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    });
+  </script>
+</body>
+</html>
